@@ -1,0 +1,331 @@
+---
+title: "Assignment 9"
+author: "Muhammad, 301297154"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r, echo = FALSE, warning = FALSE, message = FALSE}
+
+list.of.packages <- c("tidyverse", "lubridate", "modelr")
+new.packages <- list.of.packages[!(list.of.packages %in% installed.packages()[,"Package"])]
+if(length(new.packages)) install.packages(new.packages)
+library(tidyverse)
+library(lubridate)
+library(modelr)
+library(ISLR)
+```
+
+# Questions
+
+Note that this assignment follow's last years assignment that is posted on Canvas along with the solutions. The new addition is that we are adding in daily pollution information. Please use last year's solutions to help understand the code and exercises, but answers should be different given the addition of another dataset to our analysis. 
+
+## Question 1
+
+### Question
+
+Load at the daily weather data posted on canvas `vancouver_daily_weather.csv` select the following variables, and filter so that you only keep observations from January 1, 2003 through December 31, 2017. 
+
+- date
+- avg_hourly_temperature
+- avg_hourly_relative_humidity
+- avg_hourly_wind_speed
+- avg_hourly_pressure_sea
+- avg_hourly_visibility
+- precipitation
+```{r}
+setwd("C:/Users/Muhammad/Projects/assignment 9")
+Van_weather<-read_csv("vancouver_daily_weather.csv")%>%
+select(date,avg_hourly_temperature, avg_hourly_relative_humidity,avg_hourly_wind_speed, avg_hourly_pressure_sea,precipitation,avg_hourly_visibility)%>%
+   filter(between(date, as.Date("2003-01-01"), as.Date("2017-12-31")))
+```
+Make sure all variables are numeric (you will have to parse the numeric portion out of the avg. temperatre variable ). Create a new variable for each of the weather conditions that is equal to the variable squared to potentially allow for a more flexible (quadratic) relationship between these weather conditions and your outcome variable. 
+```{r}
+Van_weather<-mutate(Van_weather,avg_hourly_temperature = parse_number(avg_hourly_temperature))
+
+Van_weather<-mutate(Van_weather,sq_temp=avg_hourly_temperature^2,sq_wind=avg_hourly_wind_speed^2,sq_humid=avg_hourly_relative_humidity^2,sq_pressure=avg_hourly_pressure_sea^2,sq_prec=precipitation^2)
+```
+Also load the daily air pollution data `vancouver_daily_pollution.csv` and create a date variable allowing you to merge with the other daily datasets. Note that there is a period of time in 2011 where the pollution data is missing. 
+```{r}
+Van_pollution<-read_csv("vancouver_daily_pollution.csv")
+Van_pollution$date <- with(Van_pollution, ymd(sprintf('%04d%02d%02d', year, month, day)))
+
+
+pollution_weather <- left_join(Van_weather, Van_pollution, by = "date") %>%
+select(-day,-year,-month)
+
+```
+
+Read in the daily crime data `vancouver_daily_crime.csv` and join by date with the weather data and the pollution data to create a tibble that captures daily crime, weather, and pollution patterns. Only keep observations that match across all three datasets (*Hint you can keep just days with obs for all datasets joining using `inner_join()` rather than `left_join()` or `right_join()`.*)
+```{r}
+crime<-read_csv("vancouver_daily_crime.csv")
+pol_crime_weather<- left_join(pollution_weather, crime, by = "date") 
+```
+Using the appropriate function in the `lubridate` package, create variables that measure the day of the week (Sunday, Monday, Tuesday... ) and the month. These variables will be numeric (1 through 7 for day of week and 1 through 12 for month) if you use the `lubridate` functions. Reclassify the variables as factor variables. This will be useful in our models later as R will control separately for each level of the variable rather than it entering in as a continous regressor in your model. 
+```{r}
+pol_crime_weather<-
+  mutate(pol_crime_weather,day_of_wk=as.factor(wday(date)), month=as.factor(month(date))) 
+```
+Next, divide the data set into three parts:
+
+- `cwp_1`: randomly select half of the observations between Jan 1, 2003 and Dec. 31, 2016
+- `cwp_2`: this will be the other half of the observations between Jan 1, 2003 and Dec. 31, 2016.
+- `cwp_3`: this will be daily crime in 2017 that we can see how well our model predicts future crime using. 
+
+You will estimate your models using `cwp_1`, select a model using `cwp_2`, and, finally, predict crime in `cwp_3`.
+
+### Answer 
+```{r}
+pol_crime_weather<- mutate(pol_crime_weather, total_crime=Theft+BreakAndEnter+OffenceAgainst)
+pol_crime_weather<-pol_crime_weather[complete.cases(pol_crime_weather), ]
+set.seed(19291)
+cwp1<-filter(pol_crime_weather,date <= as.Date("2016-12-31"))
+cwp2<- filter(pol_crime_weather, date<=as.Date("2016-12-31"))
+
+
+
+rows <- sample(nrow(pol_crime_weather ))
+cwp <- pol_crime_weather [rows,] 
+
+n_obs <- nrow(cwp)
+cwp1 <- cwp[1:floor(n_obs/2),]
+cwp2 <- cwp2[(floor(n_obs/2)+1):n_obs,]
+cwp2<-cwp2[complete.cases(cwp2), ]
+
+model1<-lm(total_crime~precipitation+avg_hourly_temperature+pollution_so2+pollution_co,data=cwp1)
+model2<-lm(total_crime~precipitation+avg_hourly_temperature+pollution_so2+pollution_co+avg_hourly_pressure_sea,data=cwp1)
+model3<-lm(total_crime~precipitation+avg_hourly_temperature+pollution_so2+pollution_co+avg_hourly_pressure_sea+avg_hourly_visibility+sq_temp,data=cwp1)
+
+cwp1<-add_predictions(cwp1,model1,var="pred1")
+cwp2<-add_predictions(cwp2,model1,var="pred1")
+
+cwp1<-add_predictions(cwp1,model2,var="pred2")
+cwp2<-add_predictions(cwp2,model2,var="pred2")
+
+cwp1<-add_predictions(cwp1,model3,var="pred3")
+cwp2<-add_predictions(cwp2,model3,var="pred3")
+
+ggplot(data = cwp2) +
+ geom_point(mapping = aes(x = total_crime, y = pred1))+
+  geom_point(mapping = aes(x = total_crime, y = pred2),colour="red")+
+  geom_point(mapping = aes(x = total_crime, y = pred3),colour="blue",alpha=5/10)
+  ggplot(data = cwp2) +
+ geom_point(mapping = aes(x = total_crime, y = pred1))
+  
+  ggplot(data = cwp2)+  
+     geom_point(mapping = aes(x = total_crime, y = pred2))
+       
+       ggplot(data = cwp2)+
+        geom_point(mapping = aes(x = total_crime, y = pred3))
+       
+       cwp2<-cwp2 %>%
+ add_residuals(model1,var = "resid1") %>%
+ add_residuals(model2,var = "resid2") %>%
+ add_residuals(model3,var = "resid3") 
+         
+
+
+cwp3<-filter(pol_crime_weather,date >as.Date("2016-12-31"))
+
+cwp3<-cwp3%>%  
+  add_residuals(model1,var = "resid1") %>%
+ add_residuals(model2,var = "resid2") %>%
+ add_residuals(model3,var = "resid3") %>%
+  add_predictions(model1,var="pred1")%>%
+add_predictions(model2,var="pred2")%>%
+add_predictions(model3,var="pred13")
+
+ MSFE1 <- mean((cwp3$resid1)^2)
+ MSFE2 <-mean(cwp3$resid2^2)
+ MSFE3 <- mean(cwp3$resid3^2)
+ 
+ #Model 3 has the lowest MFSE, so the model has the best fit. 
+        
+```
+## Question 2
+
+### Question
+
+The goal of this exercise is to come up with a good model for using daily weather and pollution data to predict the crime variables (such as `"OffenseAgainst"`) in your dataset.
+
+Follow the steps in the lecture (and last year's A9 solutions), using `cwp_1` as your _training data_ and `cwp_2` as your _test data_. Ideally, you will follow the lecture notes and code written in class but make the functions used for the `Wage` data so that they can be applied to a general data set *So for the function `error_rates`, you'll want to create it in a way where you input the vector of variables but also the datasets and the name of the dependent variable.  It should be able to consider any 2 datasets (the training one and the test one), and any dependent variable (the LHS one, i.e the one we want to predict, called depvar here)*
+
+Your set of potential explanatory variable should include all of the variables that measure weather conditions and those that measure pollution (all of the variables starting with `avg_` and `pollution_`), as well as the day-of-week and month factor variables that you created in Question 1. 
+```{r}
+gen_formula <- function(y_name,X_names){
+  as.formula(
+    paste(y_name,"~", 
+          paste(X_names,collapse = " + "))
+  )
+}
+
+error_rates <- function(X_name , dataset_1 , dataset_2 , dep_var_name )
+  {
+  
+  reg_results <- lm(gen_formula( dep_var_name , X_name ),
+                    data = dataset_1)
+  
+  df_training <- dataset_1 %>% 
+    add_residuals(reg_results) %>%
+    summarize( error_rate = mean(resid^2))
+  training_error <- df_training[1,1]
+  
+  df_test <- dataset_2 %>% 
+    add_residuals(reg_results) %>%
+    summarize( error_rate = mean(resid^2))
+  test_error <- df_test[1,1]
+  
+  k <- length(X_name)
+  
+  return(c( k , training_error , test_error ))
+}
+
+
+
+```
+
+After your program provides you a tibble that tracks the number of variables, training error, and test error for each combination of weather and pollution conditions, generate two plots for the test and training error rates for all models, with the number of variables on the horizontal axis.
+
+Is there a bias-variance tradeoff for this prediction challenge?
+```{r}
+name_from_bin <- function(b,vars){
+  return(vars[as.logical(b)])
+}
+
+all_models <- function(variables){
+  # How many variables in there?
+  K <- length(variables)
+  
+  # Use binary representation
+  bin_vec <- rep(list(0:1),K)
+  
+  # Consider all of them, except the empty model. I.e. all the possible combinations of 1 and 0 fitting a vector of dimension K where K is the number of variables we consider.
+  bin_mat <- expand.grid(bin_vec)[-1,]
+  
+  # Initialize the results
+  list_of_RHS <- list()
+  
+  # Fill up the list with names by looping over all 
+  # combinations of 1 and 0 in bin_mat.
+  
+  
+  for(i in 1:nrow(bin_mat)){
+    list_of_RHS[[i]] <- name_from_bin(bin_mat[i,],variables)
+  }
+  
+  return(list_of_RHS)
+}
+
+max_X <- colnames(cwp)[c(2:7,13,14,15,19,20)]
+max_X
+
+all_subset_regression <- function(variables_to_consider , dataset_1 , dataset_2 , dep_var){
+  
+  models_to_consider <- all_models(variables_to_consider)
+  results <- map(models_to_consider,error_rates,dataset_1 , dataset_2 , dep_var)
+  useful_results <- matrix(unlist(results), ncol = 3, byrow = TRUE)
+  useful_results <- as_tibble(useful_results)
+  names(useful_results) <- c(
+    "num_vars",
+    "training_error","test_error")
+  
+  return(useful_results)
+}
+
+performances <- all_subset_regression(max_X , cwp1 , cwp2 , "total_crime")
+
+ggplot(data = performances , mapping = aes(x = num_vars)) + 
+  geom_point(aes(y = training_error))
+
+ggplot(mapping = aes(x = num_vars, y = test_error))+ 
+  geom_point(data = performances) + ylim(c(350,400)) 
+
+#It seems that there is a bias-variance tradeoff, as the minimal value of the test_error is between 7th or 9th variable.
+
+```
+
+```{r}
+#in case you really wanted offenceagainst rather total crime
+performances1 <- all_subset_regression(max_X , cwp1 , cwp2 , "OffenceAgainst")
+
+ggplot(data = performances , mapping = aes(x = num_vars)) + 
+  geom_point(aes(y = training_error))
+
+ggplot(mapping = aes(x = num_vars, y = test_error))+ 
+  geom_point(data = performances) 
+
+#It seems that there is a bias-variance tradeoff even in this case, as the minimal value of the test_error is at 7th variable.
+```
+## Question 3
+
+### Question
+
+Locate your best model from Question 2. Use it to predict in `cwp_3`. 
+
+Is the performance as you expected from the _test error rate_?
+
+The hard part in this question is to extend the code discussed in lecture so that it allows you to use your favorite model. How do you isolate the best model from the set of all models?
+
+### Answer
+```{r}
+which.min(performances1$test_error)
+performances[1615,]
+all_models(max_X)[[1615]]
+
+best_combi1 <- all_models(max_X)[[1615]]
+
+final_model <- lm (gen_formula("OffenceAgainst",best_combi1),data = cwp3)
+summary(final_model)
+
+cwp3 <- cwp3 %>%
+  add_predictions(final_model, var = "pred5")
+
+ggplot(data = cwp3) +
+  geom_point(mapping = aes(x = OffenceAgainst , y = pred5))
+
+#plot shows data is spread across 45 degree, the near it is to 45 degree the near is predictive value to actual value hence this might now be a good model for prediction 
+```
+```{r}
+which.min(performances$test_error)
+performances[1703,]
+all_models(max_X)[[1703]]
+
+best_combi <- all_models(max_X)[[1703]]
+
+final_model2 <- lm (gen_formula("total_crime",best_combi),data = cwp3)
+summary(final_model)
+
+cwp3 <- cwp3 %>%
+  add_predictions(final_model2, var = "pred4")
+
+ggplot(data = cwp3) +
+  geom_point(mapping = aes(x = total_crime , y = pred4))
+```
+
+
+## Question 4 
+
+### Question
+
+Repeat the above for one of the property crime variables (either `BreakAndEnter` or `Theft`). Are the variables chosen in the "best" model the same for the property crime variable? Do the predictions appear to be more accurate? Comment on the differences (and/or similarities) between the models with different dependent variables. Are certain variables that are included in both final models statistically significant predictors of both violent crime and property crime? Do these significant factors affect crime in the same direction?  
+
+Provide one idea as to how you think you could improve the predictive power your model. 
+
+### Answer
+```{r}
+#My previous model was for all crime and newer is for theft a little different from question, since restriction weren't presented previously, I used total crimes.
+performances_theft <- all_subset_regression(max_X , cwp1 , cwp2 , "Theft")
+ggplot(mapping = aes(x = num_vars, y = training_error)) + 
+  geom_point(data = performances_theft) 
+
+which.min(performances_theft$test_error)
+best_combi2 <- all_models(max_X)[[1671]]
+final_model1 <- lm (gen_formula("Theft", best_combi), data = cwp3)
+summary(final_model1)
+#the model appears to be similar in terms of variables in the model, however the coefficients seem to be a little bit larger for total crime. The effect is in same direction and they are more less similar in terms of statistical significance. To make the model better, i would use higher level of power of variables, for example squared of temperature and etc, unfortunately when I tried to run the functions above my computer wouldnt handle such large computation for some reasons, I think we should completely drop out sulphur dioxide and oxides of nitrogen from our variables rather consider higher level of powers. For starters there isn't much variablility in oxides of nitrogen in vancouver to effect human behaviour or mental health. Other than that I think CO2 and temperature itself are related to external factors that arent controlled for. for example it might be the case that increase in carbon emissions is correlated with economies becoming more autonomous and people's unability to adapt to new skills demand, which leads to some people being unemployed in some cases and hence spike in crimes. Another thing to observe if wheather these variables have lag effect, may be the effects come after a day or two or month.    
+
+
+#however if you want to compare it to offenceagainst as dependent variable, then we can see that the model is not the same theft includes carbon oxides as variable and offense model includes nitrogen oxides in model rather than CO. The direction is same for temperature and humidity.
+```
+ 
